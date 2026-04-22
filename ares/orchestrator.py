@@ -4,7 +4,9 @@ from typing import Dict
 from .models import MatchMetadata, EnforcementAction, Platform
 from .engine import DecisionEngine
 from .ledger import EvidenceLedger
-from .adapters.platform_adapters import YouTubeAdapter, MetaAdapter, TikTokAdapter
+from .adapters.youtube_adapter import YouTubeAdapter
+from .adapters.meta_adapter import MetaAdapter
+from .adapters.tiktok_adapter import TikTokAdapter
 
 class AresOrchestrator:
     def __init__(self, engine: DecisionEngine, ledger: EvidenceLedger):
