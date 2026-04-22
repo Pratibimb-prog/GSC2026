@@ -2,6 +2,8 @@
 
 SportGuard AI is a comprehensive security suite designed to protect live sports broadcasts and premium content from unauthorized distribution. It combines individual stream protection with large-scale network detection.
 
+---
+
 ## Key Features
 
 ### 1. Multi-Layer Fingerprinting
@@ -22,16 +24,21 @@ Invisible session-specific watermarking across three domains:
 Moves beyond individual leaks to dismantle piracy organizations:
 - **Knowledge Graph**: Maps relationships between accounts, IPs, devices, and payments.
 - **Pattern Recognition**:
-  - **Upload Velocity**: Detects robotic automated posting.
-  - **Similarity Clustering**: Grouping accounts by shared content hashing.
-  - **Temporal Coordination**: Detecting coordinated schedules across "separate" accounts.
-- **Predictive Replacements**: ML models identify new replacement accounts based on historical network patterns.
+  - **Upload Velocity**: Detects automated posting.
+  - **Similarity Clustering**: Groups accounts via shared fingerprints.
+  - **Temporal Coordination**: Detects coordinated activity.
+- **Predictive Replacements**: ML models identify new accounts replacing banned ones.
+
+---
 
 ## Modular Architecture
-- `sportguard/fingerprinting/`: Engines for content identification.
-- `sportguard/watermarking/`: Forensic embedding and extraction pipelines.
-- `sportguard/network/`: Graph analytics and network dismantling protocols.
-- `sportguard/attribution/`: Automated response and legal evidence generation.
+
+- `sportguard/fingerprinting/`: Content identification engines  
+- `sportguard/watermarking/`: Forensic embedding pipelines  
+- `sportguard/network/`: Graph analytics and detection  
+- `sportguard/attribution/`: Enforcement and legal evidence  
+
+---
 
 ## Getting Started
 1. Create and activate a virtual environment:
