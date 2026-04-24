@@ -16,6 +16,13 @@ env/
 ares_ledger.json
 test_ledger.json
 
+# Telegram Integration Generated Files
+telegram_alerts.json
+telegram_matches.json
+reference_fingerprints.json
+telegram_monitor.log
+*.session
+
 # Remote/Other Project Files
 *.pkl
 .env
