@@ -30,3 +30,19 @@ telegram_monitor.log
 *.keras
 model/
 final_implementation/*.keras
+# Secrets
+.env
+.env.*
+
+# Telegram Session Safety
+session*
+*.session-journal
+
+# Media Downloads
+media_downloads/
+
+# Logs
+*.log
+
+# OS Files
+Thumbs.db
