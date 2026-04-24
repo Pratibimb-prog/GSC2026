@@ -50,13 +50,18 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger("sportguard.telegram")
+# Telegram credentials via environment variables
+from dotenv import load_dotenv
 
-# ---------------------------------------------------------------------------
-# Telegram credentials  (keep in sync with the original telegram_monitor.py)
-# ---------------------------------------------------------------------------
-api_id = 39575664
-api_hash = "52cb3a87e3142e8d64800b89b573b9cd"
+load_dotenv()
 
+api_id_str = os.getenv("TELEGRAM_API_ID")
+api_hash = os.getenv("TELEGRAM_API_HASH")
+
+if not api_id_str or not api_hash:
+    raise ValueError("Missing Telegram API credentials in .env")
+
+api_id = int(api_id_str)
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
