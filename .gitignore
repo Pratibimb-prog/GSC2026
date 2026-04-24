@@ -1,53 +1,29 @@
-# =========================
-# Secrets (NEVER commit)
-# =========================
 .env
 .env.*
 !.env.example
 *.session
-
-# =========================
-# Python cache
-# =========================
 __pycache__/
 *.py[cod]
 *$py.class
-
-# =========================
-# Runtime generated files
-# =========================
 media_downloads/
 reference_fingerprints.json
 telegram_alerts.json
 telegram_matches.json
 telegram_monitor.log
-
-# =========================
-# Jupyter
-# =========================
 .ipynb_checkpoints/
 
-# =========================
 # Models / AI artifacts
-# =========================
 *.pkl
 *.keras
 model/
 
-# =========================
 # IDE files
-# =========================
 .vscode/
 .idea/
 .DS_Store
 
-# =========================
 # Virtual environments
-# =========================
 venv/
 env/
 
-# =========================
-# OS files
-# =========================
 Thumbs.db
