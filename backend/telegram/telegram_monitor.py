@@ -110,24 +110,24 @@ async def handler(event):
             if event.message.date
             else datetime.now().isoformat()
         )
-        logger.info(f"📢 Channel: {channel_name} | 🆔 Message ID: {message_id}")
+        logger.info(f" Channel: {channel_name} | Message ID: {message_id}")
 
         # ── 4. Duplicate detection (SHA-256) ────────────────────────────
         file_hash = compute_file_hash(file_path)
         if match_store.is_duplicate(file_hash):
             logger.info(
-                f"⏭️  Duplicate media (hash {file_hash[:16]}…) — skipping."
+                f"Duplicate media (hash {file_hash[:16]}…) — skipping."
             )
             return
 
         # ── 5. Media-type gate ──────────────────────────────────────────
         media_type = get_media_type(file_path)
         if media_type is None:
-            logger.info(f"⏭️  Unsupported media type for {file_path} — skipping.")
+            logger.info(f" Unsupported media type for {file_path} — skipping.")
             return
 
         # ── 6. Fingerprint ──────────────────────────────────────────────
-        logger.info(f"🔍 Fingerprinting {media_type}: {os.path.basename(file_path)}")
+        logger.info(f" Fingerprinting {media_type}: {os.path.basename(file_path)}")
 
         if media_type == "image":
             fingerprint = fingerprint_image(file_path)
@@ -135,7 +135,7 @@ async def handler(event):
             fingerprint = fingerprint_video(file_path)
 
         if fingerprint is None:
-            logger.warning(f"⚠️  Fingerprinting returned None for {file_path}")
+            logger.warning(f"  Fingerprinting returned None for {file_path}")
             return
 
         # ── 7. Compare against reference database ──────────────────────
@@ -145,7 +145,7 @@ async def handler(event):
 
         if not matches:
             logger.info(
-                f"✅ No match above threshold ({SIMILARITY_THRESHOLD}) "
+                f" No match above threshold ({SIMILARITY_THRESHOLD}) "
                 f"for {os.path.basename(file_path)}"
             )
             return
@@ -153,7 +153,7 @@ async def handler(event):
         # ── 8. Store result + send alert for every match ────────────────
         best = matches[0]
         logger.info(
-            f"🚨 MATCH FOUND! Score: {best['similarity_score']:.4f} "
+            f" MATCH FOUND! Score: {best['similarity_score']:.4f} "
             f"| Content: {best['content_name']}"
         )
 
@@ -169,20 +169,20 @@ async def handler(event):
         )
 
         send_alert(match_data)
-        logger.info(f"📊 Total reference matches for this file: {len(matches)}")
+        logger.info(f" Total reference matches for this file: {len(matches)}")
 
     except Exception as e:
-        logger.error(f"❌ Error processing message: {e}", exc_info=True)
+        logger.error(f" Error processing message: {e}", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 def main():
-    logger.info("🚀 SportGuard Telegram Monitor starting...")
-    logger.info(f"📁 Download folder : {DOWNLOAD_FOLDER}")
-    logger.info(f"📊 Reference DB    : {len(ref_db.entries)} entries")
-    logger.info(f"🎯 Threshold       : {SIMILARITY_THRESHOLD}")
+    logger.info("SportGuard Telegram Monitor starting...")
+    logger.info(f"Download folder : {DOWNLOAD_FOLDER}")
+    logger.info(f"Reference DB    : {len(ref_db.entries)} entries")
+    logger.info(f"Threshold       : {SIMILARITY_THRESHOLD}")
 
     client.start()
     client.run_until_disconnected()
