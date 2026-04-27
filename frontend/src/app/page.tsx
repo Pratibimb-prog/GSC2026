@@ -118,7 +118,7 @@ export default function LandingPage() {
 
             {/* Image */}
             <img
-              src="/home2.png"
+              src="/home.png"
               alt="Hero visual"
               style={{
                 width: 500,
