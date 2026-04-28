@@ -2,7 +2,11 @@
 
 import { FormEvent, useState, useRef } from "react";
 import { predictVideo, type DeepfakeResult } from "@/lib/api";
-import { Upload, Video, AlertTriangle, CheckCircle, FileVideo, ShieldCheck } from "lucide-react";
+import { Upload, Video, AlertTriangle, CheckCircle, FileVideo, ShieldCheck, Cpu, Gauge, Clock3, Film } from "lucide-react";
+
+function titleCase(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
 
 export default function DeepfakePage() {
   const [file, setFile] = useState<File | null>(null);
@@ -28,6 +32,7 @@ export default function DeepfakePage() {
 
   const isFake = result ? result.prediction === 1 : null;
   const confidence = result ? result.probability * 100 : 0;
+  const authenticity = result ? (1 - result.probability) * 100 : 0;
 
   return (
     <div className="animate-fade-in">
@@ -180,6 +185,65 @@ export default function DeepfakePage() {
                       transition: "width 2s cubic-bezier(0.34, 1.56, 0.64, 1)",
                     }}
                   />
+                </div>
+              </div>
+
+              <div style={{ marginTop: 24, padding: 24, borderRadius: 20, background: "#fff", border: "1px solid var(--sg-border)", textAlign: "left" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--sg-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
+                  Computed Analysis
+                </div>
+                <p style={{ color: "var(--sg-text-primary)", fontSize: "0.98rem", lineHeight: 1.7 }}>
+                  {result.analysis.summary}
+                </p>
+              </div>
+
+              <div style={{ marginTop: 24, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, textAlign: "left" }}>
+                <div style={{ padding: 20, borderRadius: 18, border: "1px solid var(--sg-border)", background: "var(--sg-bg-secondary)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                    <Cpu size={18} style={{ color: "var(--sg-accent)" }} />
+                    <div style={{ fontSize: 11, color: "var(--sg-text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Inference Model</div>
+                  </div>
+                  <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--sg-text-primary)" }}>{result.model.name}</div>
+                  <div style={{ marginTop: 6, fontSize: 13, color: "var(--sg-text-secondary)" }}>
+                    {result.model.framework} | {titleCase(result.model.status)}
+                  </div>
+                </div>
+
+                <div style={{ padding: 20, borderRadius: 18, border: "1px solid var(--sg-border)", background: "var(--sg-bg-secondary)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                    <Clock3 size={18} style={{ color: "var(--sg-accent)" }} />
+                    <div style={{ fontSize: 11, color: "var(--sg-text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Runtime</div>
+                  </div>
+                  <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--sg-text-primary)" }}>{result.analysis.inference_ms.toFixed(2)} ms</div>
+                  <div style={{ marginTop: 6, fontSize: 13, color: "var(--sg-text-secondary)" }}>
+                    Threshold {result.model.threshold.toFixed(2)} | {titleCase(result.confidence_label)} confidence
+                  </div>
+                </div>
+
+                <div style={{ padding: 20, borderRadius: 18, border: "1px solid var(--sg-border)", background: "var(--sg-bg-secondary)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                    <Film size={18} style={{ color: "var(--sg-accent)" }} />
+                    <div style={{ fontSize: 11, color: "var(--sg-text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Frame Sampling</div>
+                  </div>
+                  <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--sg-text-primary)" }}>
+                    {result.analysis.frames_sampled}/{result.analysis.frames_requested} frames
+                  </div>
+                  <div style={{ marginTop: 6, fontSize: 13, color: "var(--sg-text-secondary)" }}>
+                    Source {result.analysis.source_frame_count} | stride {result.analysis.sampling_stride} | reused {result.analysis.frames_reused}
+                  </div>
+                </div>
+
+                <div style={{ padding: 20, borderRadius: 18, border: "1px solid var(--sg-border)", background: "var(--sg-bg-secondary)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                    <Gauge size={18} style={{ color: "var(--sg-accent)" }} />
+                    <div style={{ fontSize: 11, color: "var(--sg-text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Signal Metrics</div>
+                  </div>
+                  <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--sg-text-primary)" }}>
+                    Authenticity {authenticity.toFixed(1)}%
+                  </div>
+                  <div style={{ marginTop: 6, fontSize: 13, color: "var(--sg-text-secondary)" }}>
+                    Delta {result.analysis.temporal_delta.toFixed(4)} | brightness {result.analysis.mean_brightness.toFixed(3)} | std {result.analysis.pixel_stddev.toFixed(3)}
+                  </div>
                 </div>
               </div>
             </div>

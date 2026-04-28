@@ -18,6 +18,7 @@ import asyncio
 import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
+from time import perf_counter
 from typing import Optional, List
 
 from dotenv import load_dotenv
@@ -78,17 +79,38 @@ app.add_middleware(
 async def startup():
     await connect_to_mongo()
     # Try loading the deepfake model
-    global deepfake_model
-    MODEL_PATH = "cnn_lstm_new_model.keras"
+    global deepfake_model, deepfake_model_info
     if TF_AVAILABLE:
         try:
-            deepfake_model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+            model_path = _resolve_deepfake_model_path()
+            if model_path is None:
+                model_path = _download_deepfake_model()
+
+            deepfake_model = tf.keras.models.load_model(str(model_path), compile=False)
+            deepfake_model_info = {
+                "name": model_path.stem,
+                "status": "loaded",
+                "resolved_path": str(model_path.resolve()),
+                "error": None,
+            }
             print("Deepfake model loaded")
         except Exception as e:
             deepfake_model = None
+            deepfake_model_info = {
+                "name": "cnn-lstm-video-forensics",
+                "status": "unavailable",
+                "resolved_path": None,
+                "error": str(e),
+            }
             print(f"Deepfake model not loaded: {e}")
     else:
         deepfake_model = None
+        deepfake_model_info = {
+            "name": "cnn-lstm-video-forensics",
+            "status": "unavailable",
+            "resolved_path": None,
+            "error": "TensorFlow not installed",
+        }
         print("TensorFlow not installed; skipping deepfake model load.")
 
     # Create MongoDB Indices
@@ -114,6 +136,17 @@ async def shutdown():
 
 
 deepfake_model = None
+deepfake_model_info = {
+    "name": "cnn-lstm-video-forensics",
+    "status": "uninitialized",
+    "resolved_path": None,
+    "error": None,
+}
+
+DEEPFAKE_FRAME_COUNT = 20
+DEEPFAKE_FRAME_SIZE = 112
+DEEPFAKE_THRESHOLD = 0.5
+DEEPFAKE_MODEL_FILE_ID = os.getenv("DEEPFAKE_MODEL_FILE_ID", "1o_jinpmPFLad1iGhAyapBbtpUT39d7Hy")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -123,6 +156,67 @@ def _oid(doc: dict) -> dict:
     if doc and "_id" in doc:
         doc["_id"] = str(doc["_id"])
     return doc
+
+
+def _candidate_deepfake_model_paths() -> list[Path]:
+    project_root = Path(__file__).resolve().parent.parent
+    backend_root = Path(__file__).resolve().parent
+    env_path = os.getenv("DEEPFAKE_MODEL_PATH")
+
+    candidates: list[Path] = []
+    if env_path:
+        candidates.append(Path(env_path).expanduser())
+
+    for name in (
+        "cnn_lstm_new_model.keras",
+        "cnn_lstm_model.keras",
+        "cnn_lstm_new_model.h5",
+        "cnn_lstm_model.h5",
+    ):
+        candidates.extend((
+            backend_root / name,
+            project_root / name,
+            project_root / "ml" / name,
+        ))
+
+    seen: set[str] = set()
+    deduped: list[Path] = []
+    for candidate in candidates:
+        key = str(candidate.resolve(strict=False))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    return deduped
+
+
+def _resolve_deepfake_model_path() -> Optional[Path]:
+    for candidate in _candidate_deepfake_model_paths():
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
+def _download_deepfake_model(destination: Optional[Path] = None) -> Path:
+    if not DEEPFAKE_MODEL_FILE_ID:
+        raise FileNotFoundError("No deepfake model file found and no DEEPFAKE_MODEL_FILE_ID configured")
+
+    try:
+        import gdown
+    except ImportError as exc:
+        raise RuntimeError(
+            "Deepfake model is missing and gdown is not installed. Install gdown or place the model file manually."
+        ) from exc
+
+    target = destination or (Path(__file__).resolve().parent.parent / "ml" / "cnn_lstm_new_model.keras")
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"Downloading deepfake model to {target}...")
+    downloaded_path = gdown.download(id=DEEPFAKE_MODEL_FILE_ID, output=str(target), quiet=False)
+    if not downloaded_path or not target.exists() or target.stat().st_size < 10_000:
+        raise RuntimeError(f"Deepfake model download failed for {target}")
+
+    return target
 
 
 # ===========================  AUTH  =========================================
@@ -361,7 +455,7 @@ async def register_content(
 
 # ===========================  DEEPFAKE  =====================================
 
-def _extract_frames(video_path, num_frames=20):
+def _extract_frames(video_path, num_frames=DEEPFAKE_FRAME_COUNT):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError("Cannot open video")
@@ -369,17 +463,69 @@ def _extract_frames(video_path, num_frames=20):
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     step = max(total // num_frames, 1)
     frames = []
+    sampled_positions: list[int] = []
     for i in range(num_frames):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, i * step)
+        frame_index = min(i * step, max(total - 1, 0))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
         ret, frame = cap.read()
         if not ret:
             break
-        frame = cv2.resize(frame, (112, 112)).astype("float32") / 255.0
+        sampled_positions.append(frame_index)
+        frame = cv2.resize(frame, (DEEPFAKE_FRAME_SIZE, DEEPFAKE_FRAME_SIZE)).astype("float32") / 255.0
         frames.append(frame)
     cap.release()
+
+    if not frames:
+        raise RuntimeError("No readable frames were extracted from the uploaded video")
+
+    frames_reused = max(num_frames - len(frames), 0)
     while len(frames) < num_frames:
-        frames.append(frames[-1])
-    return np.array(frames)
+        frames.append(frames[-1].copy())
+
+    frames_array = np.array(frames)
+    temporal_delta = float(np.abs(np.diff(frames_array, axis=0)).mean()) if len(frames_array) > 1 else 0.0
+    metrics = {
+        "frames_requested": num_frames,
+        "frames_sampled": len(sampled_positions),
+        "frames_reused": frames_reused,
+        "source_frame_count": total,
+        "sampling_stride": step,
+        "sampled_positions": sampled_positions,
+        "frame_size": {"width": DEEPFAKE_FRAME_SIZE, "height": DEEPFAKE_FRAME_SIZE},
+        "mean_brightness": float(frames_array.mean()),
+        "pixel_stddev": float(frames_array.std()),
+        "temporal_delta": temporal_delta,
+    }
+    return frames_array, metrics
+
+
+def _confidence_label(probability: float) -> str:
+    margin = abs(probability - DEEPFAKE_THRESHOLD)
+    if margin >= 0.30:
+        return "high"
+    if margin >= 0.15:
+        return "medium"
+    return "low"
+
+
+def _build_deepfake_summary(prediction: int, probability: float, metrics: dict) -> str:
+    confidence_label = _confidence_label(probability)
+    sampled = metrics["frames_sampled"]
+    requested = metrics["frames_requested"]
+    temporal_delta = metrics["temporal_delta"]
+
+    if prediction == 1:
+        return (
+            f"Synthetic manipulation likelihood is elevated at {probability * 100:.1f}% "
+            f"with {confidence_label}-confidence classification after sampling "
+            f"{sampled}/{requested} frames. Temporal delta measured {temporal_delta:.4f}."
+        )
+
+    return (
+        f"Authenticity signal remains stronger at {(1 - probability) * 100:.1f}% "
+        f"with {confidence_label}-confidence classification after sampling "
+        f"{sampled}/{requested} frames. Temporal delta measured {temporal_delta:.4f}."
+    )
 
 
 @app.post("/predict-video")
@@ -388,7 +534,8 @@ async def predict_video(
     current=Depends(get_current_user),
 ):
     if deepfake_model is None:
-        raise HTTPException(503, "Deepfake model not loaded")
+        detail = deepfake_model_info.get("error") or "Deepfake model not loaded"
+        raise HTTPException(503, detail)
     if not CV2_AVAILABLE:
         raise HTTPException(503, "OpenCV not available")
 
@@ -397,11 +544,31 @@ async def predict_video(
         temp_path = tmp.name
 
     try:
-        frames = _extract_frames(temp_path)
+        frames, metrics = _extract_frames(temp_path)
         frames = np.expand_dims(frames, axis=0)
-        preds = deepfake_model.predict(frames)
+        started_at = perf_counter()
+        preds = deepfake_model.predict(frames, verbose=0)
+        inference_ms = (perf_counter() - started_at) * 1000
         prob = float(preds[0][0])
-        return {"prediction": int(prob > 0.5), "probability": prob}
+        prediction = int(prob > DEEPFAKE_THRESHOLD)
+        return {
+            "prediction": prediction,
+            "probability": prob,
+            "verdict": "synthetic" if prediction == 1 else "authentic",
+            "confidence_label": _confidence_label(prob),
+            "model": {
+                "name": deepfake_model_info.get("name") or "cnn-lstm-video-forensics",
+                "status": deepfake_model_info.get("status") or "loaded",
+                "framework": "TensorFlow/Keras",
+                "source": deepfake_model_info.get("resolved_path"),
+                "threshold": DEEPFAKE_THRESHOLD,
+            },
+            "analysis": {
+                "summary": _build_deepfake_summary(prediction, prob, metrics),
+                "inference_ms": round(inference_ms, 2),
+                **metrics,
+            },
+        }
     except Exception as e:
         raise HTTPException(500, str(e))
     finally:

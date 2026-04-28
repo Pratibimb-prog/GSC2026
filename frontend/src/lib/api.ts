@@ -202,6 +202,32 @@ export async function getAresHistory(limit = 20) {
 export interface DeepfakeResult {
   prediction: number;
   probability: number;
+  verdict: "synthetic" | "authentic";
+  confidence_label: "high" | "medium" | "low";
+  model: {
+    name: string;
+    status: string;
+    framework: string;
+    source: string | null;
+    threshold: number;
+  };
+  analysis: {
+    summary: string;
+    inference_ms: number;
+    frames_requested: number;
+    frames_sampled: number;
+    frames_reused: number;
+    source_frame_count: number;
+    sampling_stride: number;
+    sampled_positions: number[];
+    frame_size: {
+      width: number;
+      height: number;
+    };
+    mean_brightness: number;
+    pixel_stddev: number;
+    temporal_delta: number;
+  };
 }
 
 export async function predictVideo(file: File): Promise<DeepfakeResult> {
