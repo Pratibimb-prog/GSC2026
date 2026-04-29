@@ -24,6 +24,8 @@ from typing import Optional, List
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
+import base64
+from google import genai
 import numpy as np
 from bson import ObjectId
 from fastapi import (
@@ -38,26 +40,6 @@ from auth import (
     UserCreate, UserLogin, TokenResponse, UserResponse,
     hash_password, verify_password, create_access_token, get_current_user,
 )
-
-# ---------------------------------------------------------------------------
-# Heavy imports availability
-# ---------------------------------------------------------------------------
-TF_AVAILABLE = False
-try:
-    import cv2
-    import tensorflow as tf
-    from keras.layers import Dense
-
-    original_init = Dense.__init__
-    def _patched_init(self, *args, **kwargs):
-        kwargs.pop("quantization_config", None)
-        original_init(self, *args, **kwargs)
-    Dense.__init__ = _patched_init
-    CV2_AVAILABLE = True
-    TF_AVAILABLE = True
-except ImportError:
-    CV2_AVAILABLE = False
-    TF_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # App
@@ -78,40 +60,15 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup():
     await connect_to_mongo()
-    # Try loading the deepfake model
-    global deepfake_model, deepfake_model_info
-    if TF_AVAILABLE:
-        try:
-            model_path = _resolve_deepfake_model_path()
-            if model_path is None:
-                model_path = _download_deepfake_model()
-
-            deepfake_model = tf.keras.models.load_model(str(model_path), compile=False)
-            deepfake_model_info = {
-                "name": model_path.stem,
-                "status": "loaded",
-                "resolved_path": str(model_path.resolve()),
-                "error": None,
-            }
-            print("Deepfake model loaded")
-        except Exception as e:
-            deepfake_model = None
-            deepfake_model_info = {
-                "name": "cnn-lstm-video-forensics",
-                "status": "unavailable",
-                "resolved_path": None,
-                "error": str(e),
-            }
-            print(f"Deepfake model not loaded: {e}")
+    
+    # Initialize Gemini
+    global gemini_client
+    api_key = os.getenv("GEMINI_API_KEY")
+    if api_key:
+        gemini_client = genai.Client(api_key=api_key)
+        print(f"Gemini client ready ({GEMINI_MODEL})")
     else:
-        deepfake_model = None
-        deepfake_model_info = {
-            "name": "cnn-lstm-video-forensics",
-            "status": "unavailable",
-            "resolved_path": None,
-            "error": "TensorFlow not installed",
-        }
-        print("TensorFlow not installed; skipping deepfake model load.")
+        print("WARNING: GEMINI_API_KEY not set — /predict-video will fail")
 
     # Create MongoDB Indices
     db = get_db()
@@ -135,18 +92,9 @@ async def shutdown():
         await telegram_client.disconnect()
 
 
-deepfake_model = None
-deepfake_model_info = {
-    "name": "cnn-lstm-video-forensics",
-    "status": "uninitialized",
-    "resolved_path": None,
-    "error": None,
-}
-
-DEEPFAKE_FRAME_COUNT = 20
-DEEPFAKE_FRAME_SIZE = 112
 DEEPFAKE_THRESHOLD = 0.5
-DEEPFAKE_MODEL_FILE_ID = os.getenv("DEEPFAKE_MODEL_FILE_ID", "1o_jinpmPFLad1iGhAyapBbtpUT39d7Hy")
+GEMINI_MODEL = "gemini-2.0-flash"
+gemini_client: Optional[genai.Client] = None
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -156,67 +104,6 @@ def _oid(doc: dict) -> dict:
     if doc and "_id" in doc:
         doc["_id"] = str(doc["_id"])
     return doc
-
-
-def _candidate_deepfake_model_paths() -> list[Path]:
-    project_root = Path(__file__).resolve().parent.parent
-    backend_root = Path(__file__).resolve().parent
-    env_path = os.getenv("DEEPFAKE_MODEL_PATH")
-
-    candidates: list[Path] = []
-    if env_path:
-        candidates.append(Path(env_path).expanduser())
-
-    for name in (
-        "cnn_lstm_new_model.keras",
-        "cnn_lstm_model.keras",
-        "cnn_lstm_new_model.h5",
-        "cnn_lstm_model.h5",
-    ):
-        candidates.extend((
-            backend_root / name,
-            project_root / name,
-            project_root / "ml" / name,
-        ))
-
-    seen: set[str] = set()
-    deduped: list[Path] = []
-    for candidate in candidates:
-        key = str(candidate.resolve(strict=False))
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(candidate)
-    return deduped
-
-
-def _resolve_deepfake_model_path() -> Optional[Path]:
-    for candidate in _candidate_deepfake_model_paths():
-        if candidate.exists() and candidate.is_file():
-            return candidate
-    return None
-
-
-def _download_deepfake_model(destination: Optional[Path] = None) -> Path:
-    if not DEEPFAKE_MODEL_FILE_ID:
-        raise FileNotFoundError("No deepfake model file found and no DEEPFAKE_MODEL_FILE_ID configured")
-
-    try:
-        import gdown
-    except ImportError as exc:
-        raise RuntimeError(
-            "Deepfake model is missing and gdown is not installed. Install gdown or place the model file manually."
-        ) from exc
-
-    target = destination or (Path(__file__).resolve().parent.parent / "ml" / "cnn_lstm_new_model.keras")
-    target.parent.mkdir(parents=True, exist_ok=True)
-
-    print(f"Downloading deepfake model to {target}...")
-    downloaded_path = gdown.download(id=DEEPFAKE_MODEL_FILE_ID, output=str(target), quiet=False)
-    if not downloaded_path or not target.exists() or target.stat().st_size < 10_000:
-        raise RuntimeError(f"Deepfake model download failed for {target}")
-
-    return target
 
 
 # ===========================  AUTH  =========================================
@@ -289,8 +176,7 @@ async def me(current=Depends(get_current_user)):
 
 @app.get("/")
 async def root():
-    return {"status": "ok", "service": "SportGuard AI", "deepfake_model": deepfake_model is not None}
-
+    return {"status": "ok", "service": "SportGuard AI", "deepfake_model": gemini_client is not None}
 
 @app.get("/dashboard/stats")
 async def dashboard_stats(current=Depends(get_current_user)):
@@ -455,49 +341,17 @@ async def register_content(
 
 # ===========================  DEEPFAKE  =====================================
 
-def _extract_frames(video_path, num_frames=DEEPFAKE_FRAME_COUNT):
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError("Cannot open video")
+DEEPFAKE_PROMPT = """You are a video forensics expert. Analyse the supplied video for signs of
+synthetic manipulation (deepfake, face-swap, GAN artefacts, temporal inconsistencies, etc.).
 
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    step = max(total // num_frames, 1)
-    frames = []
-    sampled_positions: list[int] = []
-    for i in range(num_frames):
-        frame_index = min(i * step, max(total - 1, 0))
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-        ret, frame = cap.read()
-        if not ret:
-            break
-        sampled_positions.append(frame_index)
-        frame = cv2.resize(frame, (DEEPFAKE_FRAME_SIZE, DEEPFAKE_FRAME_SIZE)).astype("float32") / 255.0
-        frames.append(frame)
-    cap.release()
-
-    if not frames:
-        raise RuntimeError("No readable frames were extracted from the uploaded video")
-
-    frames_reused = max(num_frames - len(frames), 0)
-    while len(frames) < num_frames:
-        frames.append(frames[-1].copy())
-
-    frames_array = np.array(frames)
-    temporal_delta = float(np.abs(np.diff(frames_array, axis=0)).mean()) if len(frames_array) > 1 else 0.0
-    metrics = {
-        "frames_requested": num_frames,
-        "frames_sampled": len(sampled_positions),
-        "frames_reused": frames_reused,
-        "source_frame_count": total,
-        "sampling_stride": step,
-        "sampled_positions": sampled_positions,
-        "frame_size": {"width": DEEPFAKE_FRAME_SIZE, "height": DEEPFAKE_FRAME_SIZE},
-        "mean_brightness": float(frames_array.mean()),
-        "pixel_stddev": float(frames_array.std()),
-        "temporal_delta": temporal_delta,
-    }
-    return frames_array, metrics
-
+Respond ONLY with a single valid JSON object — no markdown, no extra text:
+{
+  "prediction": "fake" | "authentic",
+  "confidence": <float 0.0-1.0>,
+  "frames_analyzed": <int>,
+  "indicators": [<short string>, ...],
+  "reasoning": "<one or two sentence explanation>"
+}"""
 
 def _confidence_label(probability: float) -> str:
     margin = abs(probability - DEEPFAKE_THRESHOLD)
@@ -510,71 +364,86 @@ def _confidence_label(probability: float) -> str:
 
 def _build_deepfake_summary(prediction: int, probability: float, metrics: dict) -> str:
     confidence_label = _confidence_label(probability)
-    sampled = metrics["frames_sampled"]
-    requested = metrics["frames_requested"]
-    temporal_delta = metrics["temporal_delta"]
+    frames_analyzed = metrics.get("frames_analyzed", 0)
 
-    if prediction == 1:
+    if prediction == 1:  # Fake
         return (
             f"Synthetic manipulation likelihood is elevated at {probability * 100:.1f}% "
-            f"with {confidence_label}-confidence classification after sampling "
-            f"{sampled}/{requested} frames. Temporal delta measured {temporal_delta:.4f}."
+            f"with {confidence_label}-confidence classification after analyzing "
+            f"{frames_analyzed} frames via ML service."
         )
 
     return (
         f"Authenticity signal remains stronger at {(1 - probability) * 100:.1f}% "
-        f"with {confidence_label}-confidence classification after sampling "
-        f"{sampled}/{requested} frames. Temporal delta measured {temporal_delta:.4f}."
+        f"with {confidence_label}-confidence classification after analyzing "
+        f"{frames_analyzed} frames via ML service."
     )
 
 
+# REMOVE the existing @app.post("/predict-video") function entirely, ADD:
 @app.post("/predict-video")
 async def predict_video(
     file: UploadFile = File(...),
     current=Depends(get_current_user),
 ):
-    if deepfake_model is None:
-        detail = deepfake_model_info.get("error") or "Deepfake model not loaded"
-        raise HTTPException(503, detail)
-    if not CV2_AVAILABLE:
-        raise HTTPException(503, "OpenCV not available")
+    if gemini_client is None:
+        raise HTTPException(503, "Gemini client not initialised — check GEMINI_API_KEY")
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-        tmp.write(await file.read())
-        temp_path = tmp.name
+    video_bytes = await file.read()
+    if not video_bytes:
+        raise HTTPException(400, "Empty file")
 
+    mime = file.content_type or "video/mp4"
+
+    started_at = perf_counter()
     try:
-        frames, metrics = _extract_frames(temp_path)
-        frames = np.expand_dims(frames, axis=0)
-        started_at = perf_counter()
-        preds = deepfake_model.predict(frames, verbose=0)
-        inference_ms = (perf_counter() - started_at) * 1000
-        prob = float(preds[0][0])
-        prediction = int(prob > DEEPFAKE_THRESHOLD)
-        return {
-            "prediction": prediction,
-            "probability": prob,
-            "verdict": "synthetic" if prediction == 1 else "authentic",
-            "confidence_label": _confidence_label(prob),
-            "model": {
-                "name": deepfake_model_info.get("name") or "cnn-lstm-video-forensics",
-                "status": deepfake_model_info.get("status") or "loaded",
-                "framework": "TensorFlow/Keras",
-                "source": deepfake_model_info.get("resolved_path"),
-                "threshold": DEEPFAKE_THRESHOLD,
-            },
-            "analysis": {
-                "summary": _build_deepfake_summary(prediction, prob, metrics),
-                "inference_ms": round(inference_ms, 2),
-                **metrics,
-            },
-        }
+        response = await asyncio.to_thread(
+            gemini_client.models.generate_content,
+            model=GEMINI_MODEL,
+            contents=[
+                {"inline_data": {"mime_type": mime, "data": base64.b64encode(video_bytes).decode()}},
+                DEEPFAKE_PROMPT,
+            ],
+        )
     except Exception as e:
-        raise HTTPException(500, str(e))
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        raise HTTPException(503, f"Gemini API error: {e}")
 
+    inference_ms = (perf_counter() - started_at) * 1000
+
+    raw = response.text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(502, f"Gemini returned unparseable JSON: {exc}\nRaw: {raw[:300]}")
+
+    prediction = 1 if result.get("prediction", "authentic").lower() == "fake" else 0
+    prob       = float(result.get("confidence", 0.5))
+    frames     = int(result.get("frames_analyzed", 0))
+
+    return {
+        "prediction": prediction,
+        "probability": prob,
+        "verdict": "synthetic" if prediction == 1 else "authentic",
+        "confidence_label": _confidence_label(prob),
+        "model": {
+            "name": GEMINI_MODEL,
+            "status": "ready",
+            "framework": "Google Gemini",
+            "source": "google-generativeai",
+            "threshold": DEEPFAKE_THRESHOLD,
+        },
+        "analysis": {
+            "summary": _build_deepfake_summary(prediction, prob, {"frames_analyzed": frames}),
+            "inference_ms": round(inference_ms, 2),
+            "frames_analyzed": frames,
+            "indicators": result.get("indicators", []),
+            "reasoning": result.get("reasoning", ""),
+        },
+    }
 
 # ===========================  ARES  =========================================
 
